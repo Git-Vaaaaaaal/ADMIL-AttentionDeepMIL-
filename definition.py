@@ -1,79 +1,13 @@
 import os
 import json
 import torch
+import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader
 import pandas as pd
 import numpy as np
 from sklearn.model_selection import train_test_split
 
 
-
-class DLBCLDataset(Dataset):    
-    def __init__(self, patient_ids, labels_df, features_dir, label_col='status'):
-        """
-        Args:
-            patient_ids: List of patient IDs to include
-            labels_df: DataFrame with patient_id and label columns
-            features_dir: Directory containing .pt feature files
-            label_col: Name of the label column in labels_df
-        """
-        self.patient_ids = patient_ids
-        self.features_dir = features_dir
-        self.label_col = label_col
-        
-        # Create patient_id to label mapping
-        # Handle the column name issue (patient+AF8-id -> patient_id)
-        id_col = labels_df.columns[0]  # First column is patient_id
-        self.labels = {}
-        for _, row in labels_df.iterrows():
-            pid = str(int(row[id_col])) if pd.notna(row[id_col]) else None
-            if pid and pd.notna(row[label_col]):
-                self.labels[pid] = int(row[label_col])  #Create dictionnary of patient id and label
-        
-        # Filter patient_ids to only those with labels and features
-        #Extract the embedded data of patient using id
-        self.valid_patients = []
-        for pid in patient_ids:
-            pid_str = str(pid)
-            feature_path = os.path.join(features_dir, f"{pid_str}.pt")
-            if pid_str in self.labels and os.path.exists(feature_path):
-                self.valid_patients.append(pid_str)
-        
-        print(f"Dataset initialized with {len(self.valid_patients)} patients")
-    
-    def __len__(self):
-        return len(self.valid_patients)
-    
-    def __getitem__(self, idx):
-        patient_id = self.valid_patients[idx]
-        
-        # Load features
-        feature_path = os.path.join(self.features_dir, f"{patient_id}.pt")
-        data = torch.load(feature_path, weights_only=False)
-        
-        # Handle both new format (dict) and legacy format (tensor only)
-        if isinstance(data, dict):
-            features = data['features']  # Shape: (N, feature_dim)
-            coords = data['coords']      # Shape: (N, 2) in (x, y) pixel format
-            tile_names = data.get('tile_names', [])
-        else:
-            # Legacy format: data is just the features tensor
-            features = data
-            # Create dummy coordinates (will break heatmap generation)
-            coords = torch.zeros((features.shape[0], 2), dtype=torch.long)
-            tile_names = []
-            print(f"  Warning: {patient_id} uses legacy format without coordinates")
-        
-        # Get label
-        label = self.labels[patient_id]
-        
-        return {
-            'features': features,
-            'coords': coords,
-            'label': torch.tensor(label, dtype=torch.long),
-            'patient_id': patient_id,
-            'tile_names': tile_names
-        }
 
 def get_patients_and_labels(clinical_csv, features_dir):
     """Get all patients with features and their labels."""
@@ -144,9 +78,9 @@ def train_epoch_new(
     train_loss = 0.0
     train_error = 0.0
 
-    for batch_idx, batch in enumerate(loader):
+    criterion = torch.nn.BCEWithLogitsLoss()
 
-        # --- extraction des données (comme dans train_epoch 1) ---
+    for batch in loader:
         features = batch['features']
         label = batch['label']
 
@@ -155,28 +89,28 @@ def train_epoch_new(
             label = label[0:1]
 
         data = features.to(device)
-        bag_label = label.to(device)
+        bag_label = label.float().to(device)
 
-        # --- bag dropout ---
         if bag_dropout > 0 and data.size(0) > 10:
             n_keep = max(10, int(data.size(0) * (1 - bag_dropout)))
             keep_idx = torch.randperm(data.size(0))[:n_keep]
             data = data[keep_idx]
 
-        # --- reset gradients ---
         optimizer.zero_grad()
 
-        # --- loss & error via le modèle (logique du 2ᵉ training) ---
-        loss, _ = model.calculate_objective(data, bag_label)
-        error, _ = model.calculate_classification_error(data, bag_label)
+        logits, A = model(data)
+        loss = criterion(logits.view(-1), bag_label)
 
-        train_loss += loss.item()
-        train_error += error
-
-        # --- backward ---
         loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=max_grad_norm)
         optimizer.step()
+
+        train_loss += loss.item()
+
+        # --- erreur de classification ---
+        probs = torch.sigmoid(logits)
+        preds = (probs >= 0.5).float()
+        train_error += (preds != bag_label).float().mean().item()
 
     train_loss /= len(loader)
     train_error /= len(loader)
@@ -184,8 +118,40 @@ def train_epoch_new(
     return train_loss, train_error
 
 
-
 def validate_epoch_new(model, loader, device):
+    model.eval()
+    loss_sum, error_sum = 0.0, 0.0
+
+    criterion = torch.nn.BCEWithLogitsLoss()
+
+    with torch.no_grad():
+        for batch in loader:
+            features, label = batch['features'], batch['label']
+
+            # Cas où le loader renvoie une liste (bag unique)
+            if isinstance(features, list):
+                features, label = features[0], label[0:1]
+
+            data, bag_label = features.to(device), label.float().to(device)
+
+            # --- forward pass ---
+            logits, A = model(data)
+
+            # --- loss ---
+            loss = criterion(logits.view(-1), bag_label)
+            loss_sum += loss.item()
+
+            # --- classification error ---
+            probs = torch.sigmoid(logits)
+            preds = (probs >= 0.5).float()
+            error_sum += (preds != bag_label).float().mean().item()
+
+    n = len(loader)
+    return loss_sum / n, error_sum / n
+
+
+
+""" def validate_epoch_new(model, loader, device):
     model.eval()
     loss_sum, error_sum = 0.0, 0.0
 
@@ -205,4 +171,4 @@ def validate_epoch_new(model, loader, device):
             error_sum += error
 
     n = len(loader)
-    return loss_sum / n, error_sum / n
+    return loss_sum / n, error_sum / n """

@@ -12,10 +12,11 @@ from torch.autograd import Variable
 from torch.optim.lr_scheduler import CosineAnnealingLR, LambdaLR
 from sklearn.utils.class_weight import compute_class_weight
 
-from DLBCL_dataset import DLBCLDataset, get_patients_and_labels, collate_fn, train_epoch_new, validate_epoch_new
+from definition import get_patients_and_labels, collate_fn, train_epoch_new, validate_epoch_new
 from sklearn.model_selection import train_test_split
 from model import Attention, GatedAttention, GatedAttentionFeatures
 from torch.utils.data import DataLoader
+from dataloader import DLBCLDataset, TilesBags
 
 #Variables
 clinical_csv = 'clinical_data.csv'
@@ -94,15 +95,15 @@ test_dataset = DLBCLDataset(test_patients, df, features_dir)
 #Load data
 train_loader = DataLoader(
         train_dataset, batch_size=1, shuffle=True,
-        num_workers=num_workers, collate_fn=collate_fn, pin_memory=True
+        num_workers=0, collate_fn=collate_fn, pin_memory=True
     )
 val_loader = DataLoader(
         val_dataset, batch_size=1, shuffle=False,
-        num_workers=num_workers, collate_fn=collate_fn, pin_memory=True
+        num_workers=0, collate_fn=collate_fn, pin_memory=True
     )
 test_loader = DataLoader(
         test_dataset, batch_size=1, shuffle=False,
-        num_workers=num_workers, collate_fn=collate_fn, pin_memory=True
+        num_workers=0, collate_fn=collate_fn, pin_memory=True
     )
 
 
@@ -197,6 +198,7 @@ print(
 
 
 #Old approaches
+
 """ def train(epoch):
     model.train()
     train_loss = 0.
@@ -262,4 +264,5 @@ if __name__ == "__main__":
     for epoch in range(1, args.epochs + 1):
         train(epoch)
     print('Start Testing')
-    test() """
+    test()
+ """

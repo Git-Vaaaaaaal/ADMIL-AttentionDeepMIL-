@@ -71,7 +71,7 @@ class Attention(nn.Module):
 
 
 class GatedAttentionFeatures(nn.Module):
-    def __init__(self, input_dim, hidden_dim=128):
+    def __init__(self, input_dim=768, hidden_dim=128):
         super().__init__()
 
         self.attention_V = nn.Sequential(
@@ -86,10 +86,7 @@ class GatedAttentionFeatures(nn.Module):
 
         self.attention_w = nn.Linear(hidden_dim, 1)
 
-        self.classifier = nn.Sequential(
-            nn.Linear(input_dim, 1),
-            nn.Sigmoid()
-        )
+        self.classifier = nn.Linear(input_dim, 1)
 
     def forward(self, H):
         # H: (K, D)
@@ -99,11 +96,9 @@ class GatedAttentionFeatures(nn.Module):
         A = torch.softmax(A.T, dim=1)       # (1, K)
 
         Z = torch.mm(A, H)                  # (1, D)
+        logits = self.classifier(Z)
 
-        Y_prob = self.classifier(Z)
-        Y_hat = (Y_prob >= 0.5).float()
-
-        return Y_prob, Y_hat, A
+        return logits, A
 
 
 
