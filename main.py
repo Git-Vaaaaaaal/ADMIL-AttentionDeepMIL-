@@ -39,25 +39,6 @@ label_smoothing = 0.1
 parser = argparse.ArgumentParser(description='PyTorch MNIST bags Example')
 parser.add_argument('--epochs', type=int, default=20, metavar='N',
                     help='number of epochs to train (default: 20)')
-parser.add_argument('--lr', type=float, default=0.0005, metavar='LR',
-                    help='learning rate (default: 0.0005)')
-parser.add_argument('--reg', type=float, default=10e-5, metavar='R',
-                    help='weight decay')
-parser.add_argument('--target_number', type=int, default=9, metavar='T',
-                    help='bags have a positive labels if they contain at least one 9')
-parser.add_argument('--mean_bag_length', type=int, default=10, metavar='ML',
-                    help='average bag length')
-parser.add_argument('--var_bag_length', type=int, default=2, metavar='VL',
-                    help='variance of bag length')
-parser.add_argument('--num_bags_train', type=int, default=200, metavar='NTrain',
-                    help='number of bags in training set')
-parser.add_argument('--num_bags_test', type=int, default=50, metavar='NTest',
-                    help='number of bags in test set')
-parser.add_argument('--seed', type=int, default=1, metavar='S',
-                    help='random seed (default: 1)')
-parser.add_argument('--no-cuda', action='store_true', default=False,
-                    help='disables CUDA training')
-parser.add_argument('--model', type=str, default='attention', help='Choose b/w attention and gated_attention')
 
 args = parser.parse_args()
 args.cuda = not args.no_cuda and torch.cuda.is_available()
@@ -167,8 +148,7 @@ for epoch in range(max_epochs):
         train_loader,
         optimizer,
         device,
-        max_grad_norm=max_grad_norm,
-        bag_dropout=bag_dropout
+        max_grad_norm=max_grad_norm
     )
 
     val_loss, val_error = validate_epoch_new(model,val_loader,device)

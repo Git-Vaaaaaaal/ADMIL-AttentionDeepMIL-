@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import torchvision.models as models
 
 
 class Attention(nn.Module):
@@ -99,6 +100,7 @@ class GatedAttentionFeatures(nn.Module):
         logits = self.classifier(Z)
 
         return logits, A
+
 
 
 
