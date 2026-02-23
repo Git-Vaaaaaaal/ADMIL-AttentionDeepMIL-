@@ -69,6 +69,44 @@ class Attention(nn.Module):
 
         return neg_log_likelihood, A
 
+
+class GatedAttentionFeatures(nn.Module):
+    def __init__(self, input_dim, hidden_dim=128):
+        super().__init__()
+
+        self.attention_V = nn.Sequential(
+            nn.Linear(input_dim, hidden_dim),
+            nn.Tanh()
+        )
+
+        self.attention_U = nn.Sequential(
+            nn.Linear(input_dim, hidden_dim),
+            nn.Sigmoid()
+        )
+
+        self.attention_w = nn.Linear(hidden_dim, 1)
+
+        self.classifier = nn.Sequential(
+            nn.Linear(input_dim, 1),
+            nn.Sigmoid()
+        )
+
+    def forward(self, H):
+        # H: (K, D)
+        A_V = self.attention_V(H)
+        A_U = self.attention_U(H)
+        A = self.attention_w(A_V * A_U)     # (K, 1)
+        A = torch.softmax(A.T, dim=1)       # (1, K)
+
+        Z = torch.mm(A, H)                  # (1, D)
+
+        Y_prob = self.classifier(Z)
+        Y_hat = (Y_prob >= 0.5).float()
+
+        return Y_prob, Y_hat, A
+
+
+
 class GatedAttention(nn.Module):
     def __init__(self):
         super(GatedAttention, self).__init__()

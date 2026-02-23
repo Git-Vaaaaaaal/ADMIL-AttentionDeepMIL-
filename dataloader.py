@@ -4,6 +4,8 @@ import numpy as np
 import torch
 import torch.utils.data as data_utils
 from torchvision import datasets, transforms
+import pandas as pd
+import os
 
 
 class MnistBags(data_utils.Dataset):
@@ -84,6 +86,93 @@ class MnistBags(data_utils.Dataset):
             label = [max(self.test_labels_list[index]), self.test_labels_list[index]]
 
         return bag, label
+
+
+class tilesBags(dataset):
+    def __init__(self,img_path, label_path, var_bag_length=2, num_bag=197, seed=42):
+        self.img_path = img_path
+        self.label_path = label_path
+        self.var_bag_length = var_bag_length
+        self.num_bag = num_bag
+
+        self.r = np.random.RandomState(seed)
+
+        self.num_in_train = 60000
+        self.num_in_test = 10000
+
+
+        self.train_bags_list, self.train_labels_list = self._create_bags()   
+        self.test_bags_list, self.test_labels_list = self._create_bags()
+
+    def _create_bags(self):
+        if self.train:
+            loader = data_utils.DataLoader(datasets.MNIST('../datasets',
+                                                          train=True,
+                                                          download=True,
+                                                          transform=transforms.Compose([
+                                                              transforms.ToTensor(),
+                                                              transforms.Normalize((0.1307,), (0.3081,))])),
+                                           batch_size=self.num_in_train,
+                                           shuffle=False)
+        else:
+            loader = data_utils.DataLoader(datasets.MNIST('../datasets',
+                                                          train=False,
+                                                          download=True,
+                                                          transform=transforms.Compose([
+                                                              transforms.ToTensor(),
+                                                              transforms.Normalize((0.1307,), (0.3081,))])),
+                                           batch_size=self.num_in_test,
+                                           shuffle=False)
+            
+        df_labels = pd.read_csv(self.label_path)
+
+        img_folder = os.listdir(self.img_path)
+        loader = {}
+        for patient in img_folder:
+            results = df_labels[df_labels['patient_id'] == patient]
+            loader[patient] = results
+
+        for (batch_data, batch_labels) in loader:
+            all_imgs = batch_data
+            all_labels = batch_labels
+
+        bags_list = []
+        labels_list = []
+
+        for i in range(self.num_bag):
+            bag_length = np.int(self.r.normal(self.mean_bag_length, self.var_bag_length, 1))
+            if bag_length < 1:
+                bag_length = 1
+
+            if self.train:
+                indices = torch.LongTensor(self.r.randint(0, self.num_in_train, bag_length))
+            else:
+                indices = torch.LongTensor(self.r.randint(0, self.num_in_test, bag_length))
+
+            labels_in_bag = all_labels[indices]
+            labels_in_bag = labels_in_bag == self.target_number
+
+            bags_list.append(all_imgs[indices])
+            labels_list.append(labels_in_bag)
+
+        return bags_list, labels_list
+
+    def __len__(self):
+        if self.train:
+            return len(self.train_labels_list)
+        else:
+            return len(self.test_labels_list)
+
+    def __getitem__(self, index):
+        if self.train:
+            bag = self.train_bags_list[index]
+            label = [max(self.train_labels_list[index]), self.train_labels_list[index]]
+        else:
+            bag = self.test_bags_list[index]
+            label = [max(self.test_labels_list[index]), self.test_labels_list[index]]
+
+        return bag, label
+
 
 
 if __name__ == "__main__":
