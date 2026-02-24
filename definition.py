@@ -50,7 +50,7 @@ def collate_fn(batch):
         # Multiple samples - would need padding
         # For simplicity, we concatenate but keep track of bag boundaries
         # This is mainly for batch_size=1 use case
-        features_list = [item['features'] for item in batch]
+        features_list = [int(item['features']) for item in batch]
         coords_list = [item['coords'] for item in batch]
         labels = torch.stack([item['label'] for item in batch])
         patient_ids = [item['patient_id'] for item in batch]
@@ -64,6 +64,21 @@ def collate_fn(batch):
             'patient_id': patient_ids,
             'tile_names': tile_names
         }
+    
+def collate_fn_resnet(batch): #n utilise pas les coords d une image
+    # batch = [(bag, label), (bag, label), ...]
+    item=[]
+    bags = [item[0] for item in batch]
+    labels = [item[1] for item in batch]
+
+    # batch_size = 1 → on enlève la liste
+    bags = bags[0]
+    labels = labels[0].unsqueeze(0)
+
+    return {
+        'features': bags,   # (N, C, H, W)
+        'label': labels    # (1,)
+    }
 
 
 def train_epoch_new(
@@ -72,7 +87,8 @@ def train_epoch_new(
     optimizer,
     device,
     max_grad_norm=1.0,
-    bag_dropout=0.0
+    bag_dropout=0.0,
+    resnet=False
 ):
     model.train()
     train_loss = 0.0
@@ -97,10 +113,16 @@ def train_epoch_new(
             data = data[keep_idx]
 
         optimizer.zero_grad()
+        if resnet == True :
+            Y_prob, Y_hat, A = model(data)
+            logits = Y_prob
 
-        logits, A = model(data)
-        loss = criterion(logits.view(-1), bag_label)
-
+            loss = criterion(logits.view(-1), bag_label)
+        
+        else:
+            logits, A = model(data)
+            loss = criterion(logits.view(-1), bag_label)
+        
         loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=max_grad_norm)
         optimizer.step()
@@ -118,7 +140,7 @@ def train_epoch_new(
     return train_loss, train_error
 
 
-def validate_epoch_new(model, loader, device):
+def validate_epoch_new(model, loader, device, resnet=False):
     model.eval()
     loss_sum, error_sum = 0.0, 0.0
 
@@ -134,11 +156,16 @@ def validate_epoch_new(model, loader, device):
 
             data, bag_label = features.to(device), label.float().to(device)
 
-            # --- forward pass ---
-            logits, A = model(data)
+            if resnet == True :
+                Y_prob, Y_hat, A = model(data)
+                logits = Y_prob
 
-            # --- loss ---
-            loss = criterion(logits.view(-1), bag_label)
+                loss = criterion(logits.view(-1), bag_label)
+        
+            else:
+                logits, A = model(data)
+                loss = criterion(logits.view(-1), bag_label)
+
             loss_sum += loss.item()
 
             # --- classification error ---

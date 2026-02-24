@@ -4,72 +4,66 @@ import torch.nn.functional as F
 import torchvision.models as models
 
 
-class Attention(nn.Module):
-    def __init__(self):
-        super(Attention, self).__init__()
-        self.M = 500
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from torchvision import models
+
+
+class AttentionResNet(nn.Module):
+    def __init__(self, pretrained=True):
+        super().__init__()
+
+        self.M = 512   # dimension features ResNet18
         self.L = 128
         self.ATTENTION_BRANCHES = 1
 
-        self.feature_extractor_part1 = nn.Sequential(
-            nn.Conv2d(1, 20, kernel_size=5),
-            nn.ReLU(),
-            nn.MaxPool2d(2, stride=2),
-            nn.Conv2d(20, 50, kernel_size=5),
-            nn.ReLU(),
-            nn.MaxPool2d(2, stride=2)
+        # --- ResNet18 comme extracteur ---
+        resnet = models.resnet18(pretrained=pretrained)
+        self.feature_extractor = nn.Sequential(
+            *list(resnet.children())[:-1]  # on enlève la FC
         )
 
-        self.feature_extractor_part2 = nn.Sequential(
-            nn.Linear(50 * 4 * 4, self.M),
-            nn.ReLU(),
-        )
+        # Optionnel : geler ResNet au début
+        for param in self.feature_extractor.parameters():
+            param.requires_grad = False
 
+        # --- Réseau d’attention ---
         self.attention = nn.Sequential(
-            nn.Linear(self.M, self.L), # matrix V
+            nn.Linear(self.M, self.L),
             nn.Tanh(),
-            nn.Linear(self.L, self.ATTENTION_BRANCHES) # matrix w (or vector w if self.ATTENTION_BRANCHES==1)
+            nn.Linear(self.L, self.ATTENTION_BRANCHES)
         )
 
-        self.classifier = nn.Sequential(
-            nn.Linear(self.M*self.ATTENTION_BRANCHES, 1),
-            nn.Sigmoid()
+        # --- Classifieur ---
+        self.classifier = nn.Linear(
+            self.M * self.ATTENTION_BRANCHES, 1
         )
 
     def forward(self, x):
-        x = x.squeeze(0)
+        """
+        x : (1, N, 3, H, W)
+        """
+        x = x.squeeze(0)          # (N, 3, H, W)
 
-        H = self.feature_extractor_part1(x)
-        H = H.view(-1, 50 * 4 * 4)
-        H = self.feature_extractor_part2(H)  # KxM
+        # --- Extraction features ---
+        H = self.feature_extractor(x)   # (N, 512, 1, 1)
+        H = H.view(H.size(0), -1)       # (N, 512)
 
-        A = self.attention(H)  # KxATTENTION_BRANCHES
-        A = torch.transpose(A, 1, 0)  # ATTENTION_BRANCHESxK
-        A = F.softmax(A, dim=1)  # softmax over K
+        # --- Attention ---
+        A = self.attention(H)           # (N, 1)
+        A = torch.transpose(A, 1, 0)    # (1, N)
+        A = F.softmax(A, dim=1)
 
-        Z = torch.mm(A, H)  # ATTENTION_BRANCHESxM
+        # --- Agrégation MIL ---
+        Z = torch.mm(A, H)              # (1, 512)
 
-        Y_prob = self.classifier(Z)
-        Y_hat = torch.ge(Y_prob, 0.5).float()
+        # --- Classification ---
+        logits = self.classifier(Z)     # (1, 1)
+        Y_prob = torch.sigmoid(logits)
+        Y_hat = (Y_prob >= 0.5).float()
 
         return Y_prob, Y_hat, A
-
-    # AUXILIARY METHODS
-    def calculate_classification_error(self, X, Y):
-        Y = Y.float()
-        _, Y_hat, _ = self.forward(X)
-        error = 1. - Y_hat.eq(Y).cpu().float().mean().data.item()
-
-        return error, Y_hat
-
-    def calculate_objective(self, X, Y):
-        Y = Y.float()
-        Y_prob, _, A = self.forward(X)
-        Y_prob = torch.clamp(Y_prob, min=1e-5, max=1. - 1e-5)
-        neg_log_likelihood = -1. * (Y * torch.log(Y_prob) + (1. - Y) * torch.log(1. - Y_prob))  # negative log bernoulli
-
-        return neg_log_likelihood, A
-
 
 class GatedAttentionFeatures(nn.Module):
     def __init__(self, input_dim=768, hidden_dim=128):

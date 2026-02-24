@@ -10,11 +10,12 @@ import torch.optim as optim
 import torch.utils.data as data_utils
 from torch.autograd import Variable
 from torch.optim.lr_scheduler import CosineAnnealingLR, LambdaLR
+from torchvision import transforms
 from sklearn.utils.class_weight import compute_class_weight
 
-from definition import get_patients_and_labels, collate_fn, train_epoch_new, validate_epoch_new
+from definition import get_patients_and_labels, collate_fn, collate_fn_resnet, train_epoch_new, validate_epoch_new
 from sklearn.model_selection import train_test_split
-from model import Attention, GatedAttention, GatedAttentionFeatures
+from model import AttentionResNet, GatedAttention, GatedAttentionFeatures
 from torch.utils.data import DataLoader
 from dataloader import DLBCLDataset, TilesBags
 
@@ -34,6 +35,12 @@ focal_gamma = 2.0
 use_focal_loss = False
 bag_dropout = 0.5
 label_smoothing = 0.1
+num_workers = 4
+
+lr = 0.0005
+weight_decay = 10e-5
+
+model_mode = 1
 
 # Training settings
 parser = argparse.ArgumentParser(description='PyTorch MNIST bags Example')
@@ -41,12 +48,9 @@ parser.add_argument('--epochs', type=int, default=20, metavar='N',
                     help='number of epochs to train (default: 20)')
 
 args = parser.parse_args()
-args.cuda = not args.no_cuda and torch.cuda.is_available()
+args.cuda = False
 
 torch.manual_seed(seed)
-if args.cuda:
-    torch.cuda.manual_seed(seed)
-    print('\nGPU is ON!')
 
 print('Load Train and Test Set')
 loader_kwargs = {'num_workers': 1, 'pin_memory': True} if args.cuda else {}
@@ -69,29 +73,41 @@ train_patients, val_patients, train_labels, val_labels = train_test_split(
         stratify=trainval_labels
     )
 
-train_dataset = DLBCLDataset(train_patients, df, features_dir)
-val_dataset = DLBCLDataset(val_patients, df, features_dir)
-test_dataset = DLBCLDataset(test_patients, df, features_dir)
+if model_mode == 0:
+    train_dataset = DLBCLDataset(train_patients, df, features_dir)
+    val_dataset = DLBCLDataset(val_patients, df, features_dir)
+    test_dataset = DLBCLDataset(test_patients, df, features_dir)
+else :
+    transform = transforms.Compose([
+        transforms.ToTensor(),   #numpy to tensor
+        ])
+    img_path = "dataset_tiles_resnet" #Refaire le split pour les images
+    label_path = "clinical_data.csv"
+    train_dataset = TilesBags(img_path, label_path, transform)
+    num = train_dataset.len_labels()
+    print(num)
+    val_dataset = TilesBags(img_path, label_path, transform)
+    test_dataset = TilesBags(img_path, label_path, transform)
 
 #Load data
 train_loader = DataLoader(
         train_dataset, batch_size=1, shuffle=True,
-        num_workers=0, collate_fn=collate_fn, pin_memory=True
+        num_workers=0, collate_fn=collate_fn_resnet, pin_memory=True #mettre resnet si image raw
     )
 val_loader = DataLoader(
         val_dataset, batch_size=1, shuffle=False,
-        num_workers=0, collate_fn=collate_fn, pin_memory=True
+        num_workers=0, collate_fn=collate_fn_resnet, pin_memory=True
     )
 test_loader = DataLoader(
         test_dataset, batch_size=1, shuffle=False,
-        num_workers=0, collate_fn=collate_fn, pin_memory=True
+        num_workers=0, collate_fn=collate_fn_resnet, pin_memory=True
     )
 
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 # Class weights for imbalanced loss
-train_labels_array = np.array([train_dataset.labels[p] for p in train_dataset.valid_patients])
+train_labels_array = np.array([train_dataset.labels[p] for p in train_dataset.patients])
 class_weights = compute_class_weight('balanced', classes=np.unique(train_labels_array), y=train_labels_array)
 class_weights = torch.tensor(class_weights, dtype=torch.float32).to(device)
 
@@ -117,13 +133,18 @@ test_loader = data_utils.DataLoader(MnistBags(target_number=args.target_number,
                                     **loader_kwargs) """
 
 print('Init Model')
-#model = Attention() # Attention simple, fonctionne avec image
-#model = GatedAttention() # Gated Attenion, fonctionne avec image
-model = GatedAttentionFeatures() #fonctionne avec features deja extraites
+if model_mode == 0 :
+    model = GatedAttentionFeatures() #fonctionne avec features deja extraites
+elif model_mode == 1 :
+    model = AttentionResNet() # Attention simple, fonctionne avec image
+    resnet_model = True
+elif model_mode == 2 :
+    model = GatedAttention() # Gated Attenion, fonctionne avec image
+
 if args.cuda:
     model.cuda()
 
-optimizer = optim.Adam(model.parameters(), lr=args.lr, betas=(0.9, 0.999), weight_decay=args.reg)
+optimizer = optim.Adam(model.parameters(), lr=lr, betas=(0.9, 0.999), weight_decay=weight_decay)
 
 # --- Schedulers ---
 def warmup_lambda(epoch):
@@ -148,10 +169,11 @@ for epoch in range(max_epochs):
         train_loader,
         optimizer,
         device,
-        max_grad_norm=max_grad_norm
+        max_grad_norm=max_grad_norm,
+        resnet = resnet_model
     )
 
-    val_loss, val_error = validate_epoch_new(model,val_loader,device)
+    val_loss, val_error = validate_epoch_new(model,val_loader,device, resnet=resnet_model)
 
     print(
         f"Epoch {epoch+1:03d} | "

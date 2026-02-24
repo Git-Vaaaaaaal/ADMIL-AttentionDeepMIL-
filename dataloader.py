@@ -5,12 +5,14 @@ from tkinter import Image
 import numpy as np
 import torch
 import torch.utils.data as data_utils
+from torch.utils.data import Dataset
 from torchvision import datasets, transforms
 import pandas as pd
 import os
+import cv2
 
 #Entrainement avec tuile extraites
-class TilesBags():
+class TilesBags(Dataset):
     def __init__(
         self,
         img_path,
@@ -19,20 +21,24 @@ class TilesBags():
     ):
         self.img_path = img_path
         self.transform = transform
+        self.label_path = label_path
 
         df = pd.read_csv(label_path)
         self.labels = {
-            str(row["patient+AF8-id"]): row["status"]
+            str(int(row["patient+AF8-id"])): row["status"]
             for _, row in df.iterrows()
         }
-
         self.patients = [
             p for p in os.listdir(img_path)
-            if p in self.labels
+            if os.path.isdir(os.path.join(img_path, p))
+            and p in self.labels
         ]
 
     def __len__(self):
         return len(self.patients)
+    
+    def len_labels(self):
+        return len(self.labels)
 
     def __getitem__(self, idx):
         patient = self.patients[idx]
@@ -43,7 +49,9 @@ class TilesBags():
         bag = []
         for img_name in images:
             img_path = os.path.join(patient_dir, img_name)
-            img = Image.open(img_path).convert("RGB")
+            #img = Image.open(img_path).convert("RGB")
+            img = cv2.imread(img_path, cv2.IMREAD_COLOR)
+            img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
             if self.transform:
                 img = self.transform(img)
             bag.append(img)
@@ -56,7 +64,7 @@ class TilesBags():
 
 
 #Entrainement pour features
-class DLBCLDataset():    
+class DLBCLDataset(Dataset):    
     def __init__(self, patient_ids, labels_df, features_dir, label_col='status'):
         """
         Args:
@@ -80,20 +88,20 @@ class DLBCLDataset():
         
         # Filter patient_ids to only those with labels and features
         #Extract the embedded data of patient using id
-        self.valid_patients = []
+        self.patients = []
         for pid in patient_ids:
             pid_str = str(pid)
             feature_path = os.path.join(features_dir, f"{pid_str}.pt")
             if pid_str in self.labels and os.path.exists(feature_path):
-                self.valid_patients.append(pid_str)
+                self.patients.append(pid_str)
         
-        print(f"Dataset initialized with {len(self.valid_patients)} patients")
+        print(f"Dataset initialized with {len(self.patients)} patients")
     
     def __len__(self):
-        return len(self.valid_patients)
+        return len(self.patients)
     
     def __getitem__(self, idx):
-        patient_id = self.valid_patients[idx]
+        patient_id = self.patients[idx]
         
         # Load features
         feature_path = os.path.join(self.features_dir, f"{patient_id}.pt")
