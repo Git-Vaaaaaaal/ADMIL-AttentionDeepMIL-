@@ -74,6 +74,6 @@ The work conducted by Jakub Tomczak was funded by the European Commission within
 module load python
 python3 -m venv venv
 source venv/bin/activate
-pip3 install --prefix=/work/imvia/in156281/ADMIL-AttentionDeepMIL-/venv -r requirements.txt
-export PYTHONPATH=/work/imvia/in156281/ADMIL-AttentionDeepMIL-/venv/lib/python3.9/site-packages:$PYTHONPATH
+pip3 install --prefix=/work/imvia/vb710264/ADMIL-AttentionDeepMIL-/venv -r requirements.txt
+export PYTHONPATH=/work/imvia/vb710264/ADMIL-AttentionDeepMIL-/venv/lib/python3.9/site-packages:$PYTHONPATH
 pip3 list
