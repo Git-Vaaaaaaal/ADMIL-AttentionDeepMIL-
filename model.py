@@ -14,58 +14,90 @@ class AttentionResNet(nn.Module):
     def __init__(self, pretrained=True):
         super().__init__()
 
-        self.M = 512   # dimension features ResNet18
+        self.M = 512
         self.L = 128
         self.ATTENTION_BRANCHES = 1
 
-        # --- ResNet18 comme extracteur ---
         resnet = models.resnet18(pretrained=pretrained)
         self.feature_extractor = nn.Sequential(
-            *list(resnet.children())[:-1]  # on enlève la FC
+            *list(resnet.children())[:-1]  # enlever la dernière FC
         )
 
         # Optionnel : geler ResNet au début
         for param in self.feature_extractor.parameters():
             param.requires_grad = False
 
-        # --- Réseau d’attention ---
-        self.attention = nn.Sequential(
-            nn.Linear(self.M, self.L),
-            nn.Tanh(),
-            nn.Linear(self.L, self.ATTENTION_BRANCHES)
+        # Projection des features (si besoin)
+        self.feature_projection = nn.Sequential(
+            nn.Linear(512, self.M),
+            nn.ReLU()
         )
 
-        # --- Classifieur ---
-        self.classifier = nn.Linear(
-            self.M * self.ATTENTION_BRANCHES, 1
+        # --- Gated Attention ---
+        self.attention_V = nn.Sequential(
+            nn.Linear(self.M, self.L),
+            nn.Tanh()
+        )
+
+        self.attention_U = nn.Sequential(
+            nn.Linear(self.M, self.L),
+            nn.Sigmoid()
+        )
+
+        self.attention_w = nn.Linear(self.L, self.ATTENTION_BRANCHES)
+
+        # --- Classifier MIL ---
+        self.classifier = nn.Sequential(
+            nn.Linear(self.M * self.ATTENTION_BRANCHES, 1),
+            nn.Sigmoid()
         )
 
     def forward(self, x):
         """
-        x : (1, N, 3, H, W)
+        x : (1, N, 3, H, W)  ou (N, 3, H, W) si déjà aplati
         """
-        x = x.squeeze(0)          # (N, 3, H, W)
+        if x.dim() == 5:
+            x = x.squeeze(0)  # (N, 3, H, W)
 
-        # --- Extraction features ---
+        # --- Extraction des features ---
         H = self.feature_extractor(x)   # (N, 512, 1, 1)
         H = H.view(H.size(0), -1)       # (N, 512)
+        H = self.feature_projection(H)  # (N, M)
 
-        # --- Attention ---
-        A = self.attention(H)           # (N, 1)
-        A = torch.transpose(A, 1, 0)    # (1, N)
-        A = F.softmax(A, dim=1)
+        # --- Gated Attention ---
+        A_V = self.attention_V(H)       # (N, L)
+        A_U = self.attention_U(H)       # (N, L)
+        A = self.attention_w(A_V * A_U) # (N, ATTENTION_BRANCHES)
+        A = A.transpose(1, 0)           # (ATTENTION_BRANCHES, N)
+        A = F.softmax(A, dim=1)         # normalisation sur les instances (N)
 
         # --- Agrégation MIL ---
-        Z = torch.mm(A, H)              # (1, 512)
+        Z = torch.mm(A, H)              # (ATTENTION_BRANCHES, M)
 
         # --- Classification ---
-        logits = self.classifier(Z)     # (1, 1)
-        Y_prob = torch.sigmoid(logits)
+        Y_prob = self.classifier(Z)     # (ATTENTION_BRANCHES, 1)
         Y_hat = (Y_prob >= 0.5).float()
 
         return Y_prob, Y_hat, A
 
-class GatedAttentionFeatures(nn.Module):
+    # --- Méthodes auxiliaires ---
+    def calculate_classification_error(self, X, Y):
+        Y = Y.float()
+        _, Y_hat, _ = self.forward(X)
+        error = 1. - Y_hat.eq(Y).cpu().float().mean().item()
+        return error, Y_hat
+
+    def calculate_objective(self, X, Y):
+        Y = Y.float()
+        Y_prob, _, A = self.forward(X)
+        Y_prob = torch.clamp(Y_prob, min=1e-5, max=1-1e-5)
+        neg_log_likelihood = -1. * (Y * torch.log(Y_prob) + (1-Y) * torch.log(1-Y_prob))
+        return neg_log_likelihood, A
+    
+
+
+
+class GatedAttentionFeatures(nn.Module): #features deja extraites, penser a changer input_dim
     def __init__(self, input_dim=768, hidden_dim=128):
         super().__init__()
 
@@ -98,7 +130,7 @@ class GatedAttentionFeatures(nn.Module):
 
 
 
-class GatedAttention(nn.Module):
+class GatedAttention(nn.Module): #Pour image, extracteur simple
     def __init__(self):
         super(GatedAttention, self).__init__()
         self.M = 500
