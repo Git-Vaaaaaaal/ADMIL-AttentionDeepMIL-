@@ -69,3 +69,11 @@ Acknowledgments
 The work conducted by Maximilian Ilse was funded by the Nederlandse Organisatie voor Wetenschappelijk Onderzoek (Grant DLMedIa: Deep Learning for Medical Image Analysis).
 
 The work conducted by Jakub Tomczak was funded by the European Commission within the Marie Skodowska-Curie Individual Fellowship (Grant No. 702666, ”Deep learning and Bayesian inference for medical imaging”).
+
+
+module load python
+python3 -m venv venv
+source venv/bin/activate
+pip3 install --prefix=/work/imvia/in156281/ADMIL-AttentionDeepMIL-/venv -r requirements.txt
+export PYTHONPATH=/work/imvia/in156281/ADMIL-AttentionDeepMIL-/venv/lib/python3.9/site-packages:$PYTHONPATH
+pip3 list
